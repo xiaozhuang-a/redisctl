@@ -48,7 +48,7 @@ Flags:
 ```
 
 **How to control the load on the target instance？**
-+ `--concurrent` control the ttl query concurrent,Effective only when --only-has-expire or --only-no-expire exists
++ `--concurrent` control the ttl query concurrent,effective only when --only-has-expire or --only-no-expire exists
 + `--delete-delay-ms` control the delay time between delete operation，This is the most effective way
 
 **Common parameters**
