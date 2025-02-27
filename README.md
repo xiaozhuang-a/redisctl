@@ -11,39 +11,43 @@ go build -o redisctl
 show commands
 
 ```shell
-Usage:                                                                                   ✔ ▓▒░
-  redisctl [command]
+Usage:
+  redisctl redis [command]
+
+Aliases:
+  redis, redis
 
 Available Commands:
   clean-key   clean key
-  completion  Generate the autocompletion script for the specified shell
-  help        Help about any command
 
 Flags:
-  -h, --help   help for redisctl
+  -h, --help   help for redis
+
 
 ```
 
 ## clean-key
 ```shell
 Usage:
-  redisctl clean-key [flags]
+  redisctl redis clean-key [flags]
 
 Flags:
       --concurrent int        concurrent (default 10)
   -d, --db int                redis db
-      --delete-batch int      delete batch (default 500)
-      --delete-delay-ms int   delete delay ms (default 80)
+      --delete-batch int      delete batch (default 300)
+      --delete-delay-ms int   delete delay ms (default 100)
       --dry-run               dry run
+      --enable-aliyun-iscan   enable aliyun iscan
   -h, --help                  help for clean-key
   -H, --host string           redis host
       --keys strings          keys
+      --keys-path string      keys path
       --only-has-expire       only has expire
       --only-no-expire        only no expire
   -p, --password string       redis password
   -P, --port int              redis port (default 6379)
       --prefix                is prefix
-      --scan-batch int        scan batch (default 500)
+      --scan-batch int        scan batch (default 300)
   -u, --username string       redis username
 ```
 
@@ -61,6 +65,10 @@ Flags:
 ## Example
 
 ```shell
-./redisctl clean-key --host  -p  --keys "quest" --prefix true
+./redisctl clean-key --host 127.0.0.1 -p '123'  --keys "quest" --prefix true
+
+./redisctl clean-key --host 127.0.0.1 -p '123'  --keys-path /tmp/keys.txt --prefix true --dry-run
+
+./redisctl redis clean-key --host 127.0.0.1 -p '123' --prefix true  --enable-aliyun-iscan  --keys 'tj-4kffnjohzy:'  --scan-batch 2000 --delete-delay-ms 0 --delete-batch 3000 --concurrent 20 --dry-run
 ```
 

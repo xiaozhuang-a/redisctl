@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	clearKey "github.com/xiaozhuang-a/redisctl/pkg/datamanage"
+	clearKey "github.com/xiaozhuang-a/redisctl/pkg/service/redis"
 )
 
 func NewCmdRedisClean(ctx context.Context) *cobra.Command {
@@ -37,13 +37,15 @@ func NewCmdRedisClean(ctx context.Context) *cobra.Command {
 	cmd.Flags().IntVarP(&param.DB, "db", "d", 0, "redis db")
 	cmd.Flags().BoolVarP(&param.IsPrefix, "prefix", "", false, "is prefix")
 	cmd.Flags().StringSliceVarP(&param.Keys, "keys", "", []string{}, "keys")
-	cmd.Flags().IntVarP(&param.DeleteBatch, "delete-batch", "", 500, "delete batch")
-	cmd.Flags().IntVarP(&param.ScanBatch, "scan-batch", "", 500, "scan batch")
-	cmd.Flags().IntVarP(&param.DeleteDelayMS, "delete-delay-ms", "", 80, "delete delay ms")
+	cmd.Flags().IntVarP(&param.DeleteBatch, "delete-batch", "", 300, "delete batch")
+	cmd.Flags().IntVarP(&param.ScanBatch, "scan-batch", "", 300, "scan batch")
+	cmd.Flags().IntVarP(&param.DeleteDelayMS, "delete-delay-ms", "", 100, "delete delay ms")
 	cmd.Flags().BoolVarP(&param.DryRun, "dry-run", "", false, "dry run")
 	cmd.Flags().BoolVarP(&param.OnlyNoExpire, "only-no-expire", "", false, "only no expire")
 	cmd.Flags().BoolVarP(&param.OnlyHasExpire, "only-has-expire", "", false, "only has expire")
 	cmd.Flags().IntVarP(&param.Concurrent, "concurrent", "", 10, "concurrent")
+	cmd.Flags().StringVarP(&param.KeysPath, "keys-path", "", "", "keys path")
+	cmd.Flags().BoolVarP(&param.EnableAliyunIScan, "enable-aliyun-iscan", "", false, "enable aliyun iscan")
 
 	return cmd
 }
