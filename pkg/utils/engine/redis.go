@@ -11,16 +11,16 @@ import (
 )
 
 type Redis struct {
-	DB            int    `mapstructure:"db" json:"db" yaml:"db"`
-	Addr          string `mapstructure:"addr" json:"addr" yaml:"addr"`
+	DB            int    `mapstructure:"db" json:"db" yaml:"db"`       // redis的哪个数据库
+	Addr          string `mapstructure:"addr" json:"addr" yaml:"addr"` // 服务器地址:端口
 	Username      string
-	Password      string `mapstructure:"password" json:"password" yaml:"password"`
-	EnableTracing bool   `mapstructure:"enable-trace" json:"enableTrace" yaml:"enable-trace"`
-	EnableTLS     bool   `mapstructure:"enable_tls" json:"enable_tls" yaml:"enable_tls"`
-	MasterOnly    bool   `mapstructure:"master_only" json:"master_only" yaml:"master_only"`
-	Protocol      int    `mapstructure:"protocol" json:"protocol" yaml:"protocol"`
-	PoolSize      int    `mapstructure:"pool_size" json:"pool_size" yaml:"pool_size"`
-	MinIdelConn   int    `mapstructure:"min_idel_conn" json:"min_idel_conn" yaml:"min_idel_conn"`
+	Password      string `mapstructure:"password" json:"password" yaml:"password"`                // 密码
+	EnableTracing bool   `mapstructure:"enable-trace" json:"enableTrace" yaml:"enable-trace"`     // 是否会开启 Trace
+	EnableTLS     bool   `mapstructure:"enable_tls" json:"enable_tls" yaml:"enable_tls"`          // 是否开启 tls
+	MasterOnly    bool   `mapstructure:"master_only" json:"master_only" yaml:"master_only"`       // 是否只读主库，仅在集群模式下生效
+	Protocol      int    `mapstructure:"protocol" json:"protocol" yaml:"protocol"`                // 协议版本,default 2
+	PoolSize      int    `mapstructure:"pool_size" json:"pool_size" yaml:"pool_size"`             // 连接池大小
+	MinIdelConn   int    `mapstructure:"min_idel_conn" json:"min_idel_conn" yaml:"min_idel_conn"` // 最小空闲连接数
 }
 
 func NewRedis(redisCfg Redis) (client *redis.Client, err error) {
@@ -115,6 +115,7 @@ func (RedisHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		now := time.Now()
 		err := next(ctx, cmd)
+		//utils.AddRedisCall(ctx, time.Now().Sub(now).Milliseconds(), err)
 		dur := time.Now().Sub(now).Milliseconds()
 		if dur > 100 {
 			log.Infof("redis query slow, dur=%d, cmd=%s", dur, cmd.String())

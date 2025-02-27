@@ -1,4 +1,4 @@
-package datamanage
+package redis
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaozhuang-a/redisctl/pkg/utils/engine"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,7 +29,7 @@ type ClearKey struct {
 	// 用于结束
 	done chan struct{}
 
-	// 用于delay delete，阻塞队列
+	// 用于delay delete
 	deleteCh chan struct{}
 	// 原子锁，int类型
 	deleteCount atomic.Int64
@@ -44,6 +45,7 @@ type ClearKeyParam struct {
 
 	IsPrefix bool
 	Keys     []string
+	KeysPath string
 	//Backup    bool
 	//BackupDir string
 
@@ -57,21 +59,20 @@ type ClearKeyParam struct {
 
 	Concurrent int
 
-	// todo: 前缀key情况下根据key个数并发删除
-
 	//logLevel string
+	EnableAliyunIScan bool
 }
 
 var ErrHostEmpty = errors.New("host is empty")
 
 func NewClearKey() *ClearKey {
 	return &ClearKey{
-		logg:     logrus.WithField("cmd", "clean-key"),
-		Param:    &ClearKeyParam{},
-		queue:    make(chan string, 100000),
-		done:     make(chan struct{}),
-		deleteCh: make(chan struct{}),
-		ttlQueue: make(chan string, 200000),
+		logg:  logrus.WithField("cmd", "clean-key"),
+		Param: &ClearKeyParam{},
+		queue: make(chan string, 500000),
+		done:  make(chan struct{}),
+		//deleteCh: make(chan struct{}, 1),
+		ttlQueue: make(chan string, 500000),
 	}
 }
 
@@ -85,7 +86,7 @@ func (c *ClearKey) ParseParam() error {
 	if c.Param.Password == "" {
 		return errors.New("password is empty")
 	}
-	if len(c.Param.Keys) == 0 {
+	if len(c.Param.Keys) == 0 && c.Param.KeysPath == "" {
 		return errors.New("keys is empty")
 	}
 	// 禁止*
@@ -109,6 +110,24 @@ func (c *ClearKey) ParseParam() error {
 
 	if c.Param.Concurrent == 0 {
 		c.Param.Concurrent = 10
+	}
+
+	// 获取keysPath的keys，并合并到keys
+	if c.Param.KeysPath != "" {
+		keys, err := engine.ReadLinesStrings(c.Param.KeysPath)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.Param.Keys = append(c.Param.Keys, keys...)
+	}
+
+	c.Param.Keys = c.validateKey(c.Param.Keys)
+
+	// 初始化deleteCh，如果并发大于1，使用缓冲channel
+	if c.Param.Concurrent > 1 {
+		c.deleteCh = make(chan struct{}, c.Param.Concurrent)
+	} else {
+		c.deleteCh = make(chan struct{}, 1)
 	}
 
 	return nil
@@ -171,8 +190,10 @@ func (c *ClearKey) scan() {
 	cli := c.newRedisClient()
 	defer cli.Close()
 
-	// todo: 前缀key情况下根据key个数并发删除
 	for _, key := range c.Param.Keys {
+		if key == "" {
+			continue
+		}
 		if c.Param.IsPrefix {
 			c.scanOneKey(cli, key)
 		} else {
@@ -187,26 +208,76 @@ func (c *ClearKey) scan() {
 	}
 }
 
-func (c *ClearKey) scanOneKey(cli *redis.Client, key string) {
+func (c *ClearKey) matchKey(key string) string {
+	if c.Param.IsPrefix {
+		return fmt.Sprintf("%s*", key)
+	}
+	return key
+}
 
-	match := fmt.Sprintf("%s*", key)
-	iter := cli.Scan(c.ctx, 0, match, int64(c.Param.ScanBatch)).Iterator()
-	for iter.Next(c.ctx) {
+func (c *ClearKey) scanOneKey(cli *redis.Client, key string) {
+	match := c.matchKey(key)
+	llo := c.logg.WithField("scan match ", match)
+
+	// 并发对所有节点同时使用iscan
+	if c.Param.EnableAliyunIScan {
+		llo.Infof("scan key use aliyun iscan")
+		wg := sync.WaitGroup{}
+		var nodeId int
+		for {
+			exist, err := ExistNode(c.ctx, cli, int64(nodeId))
+			if err != nil {
+				llo.Errorf("exist node %d error: %v", nodeId, err)
+				return
+			}
+			if !exist {
+				break
+			}
+
+			wg.Add(1)
+			go func(nodeId int) {
+				defer wg.Done()
+				iter := NewIScanIterator(c.ctx, cli, int64(nodeId), match, int64(c.Param.ScanBatch))
+				for iter.Next() {
+					if iter.Val() == "" {
+						llo.Warn("iscan key empty")
+						continue
+					}
+					if c.Param.OnlyNoExpire || c.Param.OnlyHasExpire {
+						c.ttlQueue <- iter.Val()
+					} else {
+						c.queue <- iter.Val()
+					}
+				}
+				if err := iter.Err(); err != nil {
+					llo.Errorf("iscan key error: %v", err)
+					return
+				}
+			}(nodeId)
+			nodeId++
+		}
+		wg.Wait()
+
+	} else {
+		iter := cli.Scan(c.ctx, 0, match, int64(c.Param.ScanBatch)).Iterator()
+		for iter.Next(c.ctx) {
+			if iter.Val() == "" {
+				llo.Warn("scan key empty")
+				continue
+			}
+			if c.Param.OnlyNoExpire || c.Param.OnlyHasExpire {
+				c.ttlQueue <- iter.Val()
+			} else {
+				c.queue <- iter.Val()
+			}
+		}
 		if err := iter.Err(); err != nil {
-			c.logg.Errorf("scan key %s error: %v", key, err)
+			llo.Errorf("scan key error: %v", err)
 			return
 		}
-		if iter.Val() == "" {
-			c.logg.Warnf("scan key %s empty", key)
-			continue
-		}
-		if c.Param.OnlyNoExpire || c.Param.OnlyHasExpire {
-			c.ttlQueue <- iter.Val()
-		} else {
-			c.queue <- iter.Val()
-		}
 	}
-	c.logg.Infof("scan key %s completed", key)
+
+	llo.Infof("scan key completed")
 }
 
 func (c *ClearKey) closeQueue() {
@@ -266,6 +337,7 @@ func (c *ClearKey) newRedisClient() *redis.Client {
 		DB:          c.Param.DB,
 		Username:    c.Param.Username,
 		MinIdelConn: 5,
+		PoolSize:    1000,
 	})
 	if err != nil {
 		c.logg.Panicf("new redis client error: %v", err)
@@ -275,17 +347,19 @@ func (c *ClearKey) newRedisClient() *redis.Client {
 
 func (c *ClearKey) delete() {
 	// 处理延迟delete
-	go func() {
-		for {
-			select {
-			case <-c.ctx.Done():
-				c.logg.Infof("delete delay process canceled")
-				return
-			case <-c.deleteCh:
-				time.Sleep(time.Millisecond * time.Duration(c.Param.DeleteDelayMS))
+	for i := 0; i < c.Param.Concurrent; i++ {
+		go func() {
+			for {
+				select {
+				case <-c.ctx.Done():
+					c.logg.Infof("delete delay process canceled")
+					return
+				case c.deleteCh <- struct{}{}:
+					time.Sleep(time.Millisecond * time.Duration(c.Param.DeleteDelayMS))
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	cli := c.newRedisClient()
 	defer func() {
@@ -299,6 +373,8 @@ func (c *ClearKey) delete() {
 	tt := time.NewTimer(batchTimeout)
 	var batchKeys []string
 
+	wg := sync.WaitGroup{}
+	deleteCh := make(chan struct{}, c.Param.Concurrent)
 	for !over {
 		tt.Reset(batchTimeout)
 
@@ -321,10 +397,20 @@ func (c *ClearKey) delete() {
 			//c.logg.Infof("get queue key timeout,current queue len: %d", len(c.queue))
 		}
 		if len(batchKeys) > 0 {
-			c.deleteKeys(cli, batchKeys)
+			wg.Add(1)
+			deleteCh <- struct{}{}
+			go func(keys []string) {
+				defer func() {
+					<-deleteCh
+					wg.Done()
+				}()
+				c.deleteKeys(cli, keys)
+			}(batchKeys)
 			batchKeys = []string{}
 		}
 	}
+	wg.Wait()
+
 	c.logg.Infof("delete key completed")
 }
 
@@ -337,7 +423,7 @@ func (c *ClearKey) deleteKeys(cli *redis.Client, keys []string) {
 	case <-c.ctx.Done():
 		c.logg.Infof("deleteKeys canceled")
 		return
-	case c.deleteCh <- struct{}{}:
+	case <-c.deleteCh:
 		if c.Param.DryRun {
 			c.logg.Infof("dry run delete keys: %v", keys)
 		} else {
@@ -348,4 +434,33 @@ func (c *ClearKey) deleteKeys(cli *redis.Client, keys []string) {
 			}
 		}
 	}
+}
+
+func ExistNode(ctx context.Context, rdb *redis.Client, nodeId int64) (bool, error) {
+	_, err := rdb.Do(ctx, "iinfo", nodeId).Result()
+	if err != nil {
+		if err.Error() == "ERR no such db node" {
+			return false, nil
+		}
+		return false, errors.Trace(err)
+	}
+
+	return true, nil
+}
+
+// 校验key 并去掉前后空格和换行符、*
+func (c *ClearKey) validateKey(key []string) []string {
+	var keys []string
+	for _, k := range key {
+		k = strings.Trim(k, " ")
+		k = strings.Trim(k, "\r")
+		k = strings.Trim(k, "\n")
+		k = strings.Trim(k, "*")
+		if k == "" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	c.logg.Infof("validate key: %v", keys)
+	return keys
 }

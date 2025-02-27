@@ -10,14 +10,14 @@ type CmdInterface interface {
 	ParseParam() error
 }
 
-var Command = &cobra.Command{
-	Use: "redisctl",
-	//Version:          version.Get().GitVersion,
-	Short:            "",
+var RedisCmd = &cobra.Command{
+	Use:              "redis",
+	Aliases:          []string{"redis"},
+	Short:            "tools for redis command",
 	Long:             ``,
 	TraverseChildren: true,
 }
 
-func init() {
-	Command.AddCommand(NewCmdRedisClean(context.Background()))
+func Init() {
+	RedisCmd.AddCommand(NewCmdRedisClean(context.Background()))
 }

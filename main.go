@@ -2,6 +2,7 @@ package main
 
 import (
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
 	"github.com/xiaozhuang-a/redisctl/cmd"
 	"os"
 )
@@ -21,8 +22,21 @@ func init() {
 	log.SetLevel(log.InfoLevel)
 }
 
+var Cmd = &cobra.Command{
+	Use: "redisctl",
+	//Version:          version.Get().GitVersion,
+	Short:            "",
+	Long:             ``,
+	TraverseChildren: true,
+}
+
+func init() {
+	cmd.Init()
+	Cmd.AddCommand(cmd.RedisCmd)
+}
+
 func main() {
-	err := cmd.Command.Execute()
+	err := Cmd.Execute()
 	if err != nil {
 		log.Errorf("%+v", err)
 		os.Exit(1)
